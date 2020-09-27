@@ -1,0 +1,217 @@
+AlanTuringLDA
+========================================================
+author: Nicole Nisbett
+date: 30 September 2020
+font-family: 'Helvetica'
+autosize: true
+
+```{r setup, include=FALSE}
+opts_chunk$set(cache=TRUE)
+```
+Latent Dirichlet Allocation (LDA)
+========================================================
+
+For more details on authoring R presentations please visit <https://support.rstudio.com/hc/en-us/articles/200486468>.
+
+- Probabilistic algorithm to extract topics from text
+- Developed in 2003
+- Main assumptions
+> > 1. each topic is a collection of words
+> > 2. each document is a collection of topics
+
+
+Preparation
+========================================================
+
+To run an LDA model we first need to load some necessary libraries for natural language processing and data manipulation.
+
+```{r libs}
+
+library(dplyr)
+
+```
+
+Create the data frames
+```{r frames}
+library(textstem)
+library(readr)
+library(broom)
+
+raw=read_csv("/Users/nicolenisbett/Documents/PhD/R/Complete Analysis/AnimalFurDebate.csv")
+
+raw[1,]
+
+get_comments = function(file){
+  comments=broom::tidy(file$Message)
+
+  #create the comment numbers
+  comment_list=paste0( "comment", 1:nrow(file))
+  comments[,2]=comment_list
+  colnames(comments)=(c("message", "document"))
+  comments$message=lemmatize_strings(comments$message)
+  return(comments)
+}
+
+comment.file=get_comments(raw)
+
+```
+
+
+Preparation
+========================================================
+
+```{r,cache=TRUE}
+library(tm)
+
+#Prepare data structure for corpus
+prep_corpus=function(file){
+  #rearrange so file is [id, message]
+  df.forCorpus=data.frame(file$document, file$message)
+  #rename columns for input into corpus
+  colnames(df.forCorpus)=c("doc_id", "text")
+  #create corpus
+  preCorpus=VCorpus(DataframeSource(df.forCorpus))
+  
+  return(preCorpus)
+}
+
+#Create a corpus
+clean_corpus <- function(corpus){
+  remove.urls <- function (x) gsub ("http[[:alnum:]]*", "", x)
+  corpus <- tm_map(corpus, content_transformer(remove.urls))
+  remove.weird.characters <- function (x) gsub("[^0-9A-Za-z///' ]", "", x)
+  remove.more.weird.characters <- function (x) gsub('[^ -~]', '', x)
+  corpus <- tm_map(corpus, content_transformer(remove.weird.characters))
+  
+  corpus <- tm_map(corpus, content_transformer(remove.more.weird.characters))
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  corpus <- tm_map(corpus, removeWords, stopwords("en"))
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, content_transformer(stripWhitespace))
+  
+  
+  return(corpus)
+}
+
+corpus=clean_corpus(prep_corpus(comment.file))
+#Create a document-term matrix
+dtm=DocumentTermMatrix(corpus)
+#remove non-zero rows
+rowTotals=apply(dtm, 1, sum)
+dtm=dtm[rowTotals>0,]
+inspect(dtm)
+
+rows <- nrow(dtm)
+
+splitter <- sample(1:rows, round(rows * 0.75))
+
+train.dtm=dtm[splitter,]
+test.dtm=dtm[-splitter,]
+
+```
+
+Model building
+========================================================
+
+```{r, cache=TRUE}
+library(ldatuning)
+library(topicmodels)
+
+optimal=FindTopicsNumber(
+    train.dtm,
+    topics = seq(from = 2, to = 20, by = 2),
+    metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010"),
+    method = "VEM",
+    control = list(seed = 1234),
+    mc.cores = 2L,
+    verbose = FALSE
+  )
+
+FindTopicsNumber_plot(optimal)
+
+#lda.model = LDA(dtm, k=, control = list(seed = 1234), method="Gibbs")
+
+```
+
+Model building
+========================================================
+
+Use perplexity to evaluate performance of models
+
+```{r, cache=TRUE}
+
+#create the models
+get_topic_model=function(dtm, k){
+  model = LDA((dtm), k=(k), control = list(seed = 1234), method="VEM")
+  return(model)
+}
+
+#Test with different values of k indicated in plot
+perplexity(get_topic_model(train.dtm, 10), test.dtm)
+
+perplexity(get_topic_model(train.dtm, 12), test.dtm)
+
+perplexity(get_topic_model(train.dtm, 14), test.dtm)
+
+perplexity(get_topic_model(train.dtm, 16), test.dtm)
+
+
+
+#lda.model = LDA(dtm, k=, control = list(seed = 1234), method="Gibbs")
+
+```
+
+
+Model building
+========================================================
+
+They all have similar scores so I will chose a manageable number of 10 
+```{r, cache=TRUE}
+
+lda.model = LDA(dtm, k=10, control = list(seed = 1234), method="VEM")
+
+```
+
+Exploring the topics
+========================================================
+
+Gamma scores give the per-document topic distributions
+
+```{r, cache=TRUE, echo=FALSE}
+
+library(ggplot2)
+ggplot(data= data.frame(
+  table(topics(lda.model))/sum(table(topics(lda.model)))*100
+), aes(x=Var1, y=Freq)) +
+  geom_bar(stat='identity') +
+  ylab("Percentage of submissions") +
+  ylim(0,30)+
+  xlab("Topic Number") +
+  ggtitle("Distribution") +
+  theme(legend.position = "none")
+
+```
+
+Visualisation
+========================================================
+<!--
+```{r servis, echo=FALSE, message=FALSE, warning=FALSE}
+serVis(topicmodels2LDAvis(lda.model), out.dir="alan", open.browser = FALSE)
+htmltools::includeHTML("alan/index.html")
+```
+
+<head>
+  <script src="alan/d3.v3.js"></script>
+  <script src="alan/ldavis.js"></script>
+  <link rel="stylesheet" type="text/css" href="alan/lda.css">
+</head>
+<body>
+  <div id = "mydiv"></div>
+  <script>
+    var vis = new LDAvis("#mydiv", "lda.json");
+  </script>
+</body>
+
+<iframe width="2000" height="1000" src="alan/index.html" frameborder="0"></iframe>
+
+-->
